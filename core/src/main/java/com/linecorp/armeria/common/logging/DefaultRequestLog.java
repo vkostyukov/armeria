@@ -48,10 +48,7 @@ import com.linecorp.armeria.common.Scheme;
 import com.linecorp.armeria.common.SerializationFormat;
 import com.linecorp.armeria.common.SessionProtocol;
 import com.linecorp.armeria.common.annotation.Nullable;
-import com.linecorp.armeria.common.util.EventLoopCheckingFuture;
-import com.linecorp.armeria.common.util.SystemInfo;
-import com.linecorp.armeria.common.util.TextFormatter;
-import com.linecorp.armeria.common.util.UnmodifiableFuture;
+import com.linecorp.armeria.common.util.*;
 import com.linecorp.armeria.internal.common.util.ChannelUtil;
 import com.linecorp.armeria.internal.common.util.TemporaryThreadLocals;
 import com.linecorp.armeria.server.HttpResponseException;
@@ -419,12 +416,14 @@ final class DefaultRequestLog implements RequestLog, RequestLogBuilder {
         }
     }
 
-    private static void completeSatisfiedFutures(RequestLogFuture[] satisfiedFutures, RequestLog log) {
-        for (RequestLogFuture f : satisfiedFutures) {
-            if (f == null) {
-                break;
+    private void completeSatisfiedFutures(RequestLogFuture[] satisfiedFutures, RequestLog log) {
+        try (SafeCloseable ignored = ctx.push()) {
+            for (RequestLogFuture f : satisfiedFutures) {
+                if (f == null) {
+                    break;
+                }
+                f.completeLog(log);
             }
-            f.completeLog(log);
         }
     }
 
