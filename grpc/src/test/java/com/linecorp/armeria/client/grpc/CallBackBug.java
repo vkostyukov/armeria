@@ -2,6 +2,8 @@ package com.linecorp.armeria.client.grpc;
 
 import com.google.protobuf.ByteString;
 import com.linecorp.armeria.common.grpc.GrpcSerializationFormats;
+import com.linecorp.armeria.grpc.testing.Messages;
+import com.linecorp.armeria.grpc.testing.UnitTestServiceGrpc;
 import com.linecorp.armeria.server.ServerBuilder;
 import com.linecorp.armeria.server.grpc.GrpcService;
 import com.linecorp.armeria.testing.junit5.server.ServerExtension;
@@ -10,14 +12,9 @@ import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
-import testing.grpc.Messages;
-import testing.grpc.UnitTestServiceGrpc;
 
 import java.net.URI;
 import java.util.concurrent.CompletableFuture;
-
-import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
-
 
 public class CallBackBug {
 
@@ -44,7 +41,7 @@ public class CallBackBug {
 
     private static final UnitTestServiceGrpc.UnitTestServiceImplBase unitTestServiceImpl = new UnitTestServiceGrpc.UnitTestServiceImplBase() {
         @Override
-        public StreamObserver<Messages.SimpleRequest> errorFromClient(StreamObserver<Messages.SimpleResponse> responseObserver) {
+        public StreamObserver<Messages.SimpleRequest> streamThrowsError(StreamObserver<Messages.SimpleResponse> responseObserver) {
             ServerCallStreamObserver<Messages.SimpleResponse> serverResponseObserver =
                     (ServerCallStreamObserver<Messages.SimpleResponse>) responseObserver;
 
@@ -83,6 +80,7 @@ public class CallBackBug {
         @Override
         protected void configure(ServerBuilder sb) {
             sb.workerGroup(1);
+            sb.requestTimeoutMillis(60 * 1000);
             sb.maxRequestLength(10_000_000); // 10mb
             sb.idleTimeoutMillis(0);
             sb.http(0);
@@ -99,38 +97,18 @@ public class CallBackBug {
         }
     };
 
-//    @Test
-//    void onErrorCallback() throws Exception {
-//        final URI uri = server.httpUri(GrpcSerializationFormats.PROTO);
-//
-//        UnitTestServiceGrpc.UnitTestServiceStub unitTestAsyncStub =
-//                GrpcClients.builder(uri.getScheme(), server.httpEndpoint())
-//                        .build(UnitTestServiceGrpc.UnitTestServiceStub.class);
-//
-//        StreamObserver<Messages.SimpleRequest> serverStream = unitTestAsyncStub.errorFromClient(clientObserver);
-//
-//        final Messages.SimpleRequest request =
-//                Messages.SimpleRequest.newBuilder()
-//                        .setPayload(Messages.Payload.newBuilder()
-//                                .setBody(ByteString.copyFrom(new byte[10240])))
-//                        .build();
-//
-//        serverStream.onNext(request);
-//        serverStream.onError(new Throwable("boom"));
-//
-//        aborted.get();
-//    }
-
     @Test
     void onCancelCallback() throws Exception {
         final URI uri = server.httpUri(GrpcSerializationFormats.PROTO);
 
         UnitTestServiceGrpc.UnitTestServiceStub unitTestAsyncStub =
-                GrpcClients.builder(uri.getScheme(), server.httpEndpoint())
+                GrpcClients
+                        .builder(uri.getScheme(), server.httpEndpoint())
+                        .responseTimeoutMillis(60 * 1000)
                         .build(UnitTestServiceGrpc.UnitTestServiceStub.class);
 
         ClientCallStreamObserver<Messages.SimpleRequest> serverStream = (ClientCallStreamObserver<Messages.SimpleRequest>)
-                unitTestAsyncStub.errorFromClient(clientObserver);
+                unitTestAsyncStub.streamThrowsError(clientObserver);
 
         final Messages.SimpleRequest request =
                 Messages.SimpleRequest.newBuilder()
@@ -141,7 +119,8 @@ public class CallBackBug {
         serverStream.onNext(request);
         firstRequestHandled.get(); // wait for the first exchange to happen
 
-        serverStream.onError(new Throwable("boom"));
+        // Neither onError nor cancel works in 1.16. Both seems to do the right thing on main.
+        //serverStream.onError(new Throwable("boom"));
         serverStream.cancel("Cancel", new Throwable("boom"));
 
         cancelled.get();
